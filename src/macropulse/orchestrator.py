@@ -18,6 +18,7 @@ from datetime import date, datetime, timezone
 from typing import Any
 
 from macropulse.config import settings
+from macropulse.dashboard.server import dashboard, start_dashboard_server
 from macropulse.dedup import dedup_cache
 from macropulse.feeds.calendar import EconomicCalendarPoller
 from macropulse.feeds.price_feed import price_feed
@@ -87,11 +88,21 @@ class Sentinel:
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._handle_shutdown)
 
+        # Initialise dashboard system info
+        provider_label = self._llm._providers[0][0] if self._llm._providers else "unknown"
+        model_label    = self._llm._providers[0][1] if self._llm._providers else "—"
+        await dashboard.update_system(
+            status="running",
+            llm_provider=f"{provider_label}/{model_label}",
+        )
+
         log.info("sentinel.started", dry_run=settings.dry_run)
 
         # Run all workers concurrently
         try:
             async with asyncio.TaskGroup() as tg:
+                tg.create_task(start_dashboard_server(), name="dashboard_server")
+                tg.create_task(self._price_broadcast_loop(), name="price_broadcaster")
                 tg.create_task(self._calendar_poller.start(), name="calendar_poller")
                 tg.create_task(self._rss_monitor.start(), name="rss_monitor")
                 tg.create_task(self._twitter_monitor.start(), name="twitter_monitor")
@@ -116,9 +127,22 @@ class Sentinel:
 
     # ── Event Processing Loop ────────────────────────────────────────────
 
+    async def _price_broadcast_loop(self) -> None:
+        """Push live prices to the dashboard every 2 seconds."""
+        while not self._shutdown_event.is_set():
+            await asyncio.sleep(2)
+            for sym in ("XAU/USD", "NAS100", "USD/JPY"):
+                p = price_feed.get_price(sym)
+                if p:
+                    await dashboard.push_price(sym, p.bid, p.ask)
+
     async def _process_events(self) -> None:
         """Main consumer loop: dequeue events and process through LLM pipeline."""
         log.info("event_processor.started")
+        await dashboard.update_feed_status("calendar", "active")
+        await dashboard.update_feed_status("rss", "active")
+        await dashboard.update_feed_status("twitter",
+            "active" if settings.twitter_mode != "disabled" else "disabled")
         while not self._shutdown_event.is_set():
             try:
                 event = await asyncio.wait_for(self._queue.get(), timeout=1.0)
@@ -205,6 +229,19 @@ class Sentinel:
         # ── Format and send alert ────────────────────────────────────────
         message = format_signal_dict(signal_dict, triggered_by=source_name)
         await self._telegram.send_html(message)
+
+        # ── Push to dashboard ────────────────────────────────────────────
+        await dashboard.push_signal(signal_dict)
+        await dashboard.push_event({
+            "title": signal_dict.get("event_title", "—"),
+            "source": source_name,
+            "impact": signal_dict.get("impact_rating", "—"),
+        })
+        await dashboard.update_system(
+            signals_today=self._daily_pnl.signals_fired + 1,
+            daily_loss=self._daily_pnl.realized_loss,
+            circuit_breaker=self._daily_pnl.circuit_breaker_triggered,
+        )
 
         # Track signal count
         self._daily_pnl.signals_fired += 1

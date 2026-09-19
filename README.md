@@ -230,7 +230,31 @@ Each provider has 3 retry attempts with exponential backoff before falling throu
 
 ---
 
+## Real-Time Web Dashboard 🖥️
+
+MacroPulse Sentinel includes a built-in real-time web dashboard running on port `8765`:
+
+- **Live Tickers**: Real-time tick updates and dynamic sparkline canvases for **XAU/USD**, **NAS100**, and **USD/JPY**.
+- **Signal Feed**: Live cards for `BUY 🟢`, `SELL 🔴`, and `STAND ASIDE ⚪` with exact entry, stop loss, take profit 1 & 2, lot sizing ($25 exact risk), and LLM attribution.
+- **Circuit Breaker Status**: Visual progress bar tracking realized intraday losses towards the $750 prop-firm ceiling.
+- **Feed Health**: Live status indicators for Economic Calendar, RSS Feeds, and Twitter/Nitter monitors.
+- **Event Log**: Real-time stream of ingested news headlines and calendar releases.
+- **Zero Configuration**: Starts automatically with `python main.py` at `http://localhost:8765`.
+
+### API & WebSocket Endpoints
+
+| Endpoint | Protocol | Description |
+|----------|----------|-------------|
+| `GET /` | HTTP | Glassmorphism dashboard UI |
+| `GET /api/state` | HTTP | Full state snapshot (prices, signals, events, system) |
+| `GET /api/signals`| HTTP | Last 50 trade signals (JSON) |
+| `GET /api/events` | HTTP | Last 100 raw ingested events (JSON) |
+| `GET /ws` | WebSocket| Real-time streaming push for prices, signals, and system updates |
+
+---
+
 ## Sample Alert Output
+
 
 ```
 🚨 MACROPULSE SENTINEL ALERT 🚨
