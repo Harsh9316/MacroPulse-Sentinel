@@ -43,21 +43,27 @@ def _is_high_impact(event_name: str, currency: str, impact: str) -> bool:
     return any(kw in name_lower for kw in HIGH_IMPACT_EVENTS)
 
 
-def _parse_ff_datetime(date_str: str, time_str: str) -> datetime | None:
+def _parse_ff_datetime(date_str: str, time_str: str = "") -> datetime | None:
     """Parse Forex Factory date/time strings into a UTC datetime."""
+    if not date_str:
+        return None
     try:
-        # FF format: date="2025-01-17", time="8:30am"
+        # Modern Forex Factory JSON format: ISO-8601 "2026-09-13T04:15:00-04:00"
+        if "T" in date_str:
+            dt = datetime.fromisoformat(date_str)
+            return dt.astimezone(timezone.utc)
+        # Legacy FF format: date="2025-01-17", time="8:30am"
         combined = f"{date_str} {time_str}".strip()
         if not time_str or time_str.lower() in ("all day", "tentative", ""):
             dt = datetime.strptime(date_str, "%Y-%m-%d")
         else:
             dt = datetime.strptime(combined, "%Y-%m-%d %I:%M%p")
         # FF calendar is US/Eastern — convert to UTC (approximation: UTC-5)
-        # For production accuracy, use pytz or zoneinfo
         dt = dt.replace(tzinfo=timezone.utc) + timedelta(hours=5)
         return dt
     except Exception:
         return None
+
 
 
 def _event_dedup_key(event: dict[str, Any]) -> str:
@@ -169,11 +175,19 @@ class EconomicCalendarPoller:
 
     async def _fetch_calendar(self) -> list[dict[str, Any]]:
         """Fetch JSON from Forex Factory with fallback URL."""
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "application/json, text/plain, */*",
+        }
         for url in (_FF_CALENDAR_URL, _FF_CALENDAR_ALT):
             try:
-                async with self._session.get(url) as resp:  # type: ignore[union-attr]
-                    resp.raise_for_status()
-                    return await resp.json(content_type=None)
-            except aiohttp.ClientError:
+                async with self._session.get(url, headers=headers) as resp:  # type: ignore[union-attr]
+                    if resp.status == 200:
+                        data = await resp.json(content_type=None)
+                        if isinstance(data, list):
+                            return data
+            except Exception as exc:
+                log.debug("calendar_poller.attempt_failed", url=url, error=str(exc))
                 continue
         raise RuntimeError("All calendar URLs failed")
+
