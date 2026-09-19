@@ -207,7 +207,7 @@ class Sentinel:
         try:
             signal = await self._llm.evaluate(SYSTEM_PROMPT, user_prompt)
         except LLMProviderError as exc:
-            log.error("event_processor.llm_failed", error=str(exc), event=event_text[:80])
+            log.error("event_processor.llm_failed", error=str(exc), event_data=event_text[:80])
             return
         except Exception as exc:
             log.error("event_processor.llm_unexpected", error=str(exc))
@@ -215,8 +215,9 @@ class Sentinel:
 
         # Skip LOW-impact signals to reduce noise
         if signal.impact_rating.value == "LOW":
-            log.info("event_processor.low_impact_skipped", event=signal.event_title)
+            log.info("event_processor.low_impact_skipped", event_name=signal.event_title)
             return
+
 
         # ── Risk enrichment ───────────────────────────────────────────────
         signal_dict = signal.model_dump()
